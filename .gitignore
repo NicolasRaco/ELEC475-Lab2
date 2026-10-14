@@ -1,0 +1,21 @@
+# Python virtual environment (rebuild with: pip install -r requirements.txt)
+.venv/
+
+# Datasets (downloaded automatically by the scripts)
+data/
+
+# Model checkpoints (too large for GitHub; included in the OnQ zip instead)
+checkpoints/
+*.pth
+
+# Python cache
+__pycache__/
+*.pyc
+
+# Submission archives
+*.zip
+
+# Editor / OS files
+.vscode/
+Thumbs.db
+desktop.ini
