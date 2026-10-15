@@ -69,3 +69,44 @@ def plot_ablation_summary(
     plt.savefig(save_path, dpi=200)
     plt.close()
     print(f"Master ablation summary plot saved to: {save_path}")
+
+
+if __name__ == "__main__":
+    # Builds the master ablation plot from the per-run history files that
+    # train.py writes to results/. Usage (from the project root):
+    #   python -m utils.visualization --plot-ablation
+    #   python -m utils.visualization --plot-ablation --runs lenet_baseline lenet_modern alexnet_bn
+    import argparse
+    import glob
+    import json
+
+    parser = argparse.ArgumentParser(description="ELEC 475: Ablation plot builder")
+    parser.add_argument("--plot-ablation", action="store_true", help="Plot validation accuracy for several runs")
+    parser.add_argument("--results-dir", type=str, default="results", help="Folder of run history .json files")
+    parser.add_argument("--runs", nargs="+", default=None,
+                        help="Run names to include, in legend order (default: every CIFAR-10 run)")
+    parser.add_argument("--save-path", type=str, default="./plots/ablation_summary.png")
+    args = parser.parse_args()
+
+    if not args.plot_ablation:
+        parser.print_help()
+    else:
+        runs = {}
+        for path in sorted(glob.glob(os.path.join(args.results_dir, "*.json"))):
+            with open(path) as f:
+                run = json.load(f)
+            runs[run["run_name"]] = run
+
+        if args.runs:
+            missing = [r for r in args.runs if r not in runs]
+            if missing:
+                print(f"Warning: no history found for {missing} in {args.results_dir}/")
+            selected = [runs[r] for r in args.runs if r in runs]
+        else:
+            selected = [r for r in runs.values() if r["config"]["dataset"] == "cifar10"]
+
+        if not selected:
+            print(f"No run histories found in {args.results_dir}/. Train some models first.")
+        else:
+            ablation = {r["run_name"]: {"val_accs": r["history"]["val_acc"]} for r in selected}
+            plot_ablation_summary(ablation, save_path=args.save_path)

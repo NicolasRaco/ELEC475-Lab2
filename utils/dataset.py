@@ -6,7 +6,8 @@ import os
 import urllib.request
 import zipfile
 import torch
-from torch.utils.data import DataLoader
+from PIL import Image
+from torch.utils.data import DataLoader, Dataset
 from torchvision.datasets import CIFAR10, ImageFolder
 from .transforms import get_train_transforms, get_test_transforms
 
@@ -36,6 +37,45 @@ def download_and_extract_tiny_imagenet(data_dir: str = "./data"):
     print("Extraction complete.")
     return target_dir
 
+class TinyImageNetVal(Dataset):
+    """
+    Official Tiny ImageNet-200 validation split (10,000 images, 50 per class).
+
+    Unlike train/, the val/ folder is NOT laid out one-folder-per-class, so
+    ImageFolder can't read it. All images sit in val/images/ and their labels
+    live in val/val_annotations.txt, one line per image:
+        val_0.JPEG <TAB> n03444034 <TAB> x0 <TAB> y0 <TAB> x1 <TAB> y1
+    We only need the first two columns (filename, WordNet ID).
+
+    class_to_idx must come from the training ImageFolder so that the same
+    WordNet ID maps to the same integer label in both splits.
+    """
+    def __init__(self, root: str, class_to_idx: dict, transform=None):
+        self.transform = transform
+        img_dir = os.path.join(root, "val", "images")
+        ann_path = os.path.join(root, "val", "val_annotations.txt")
+
+        self.samples = []
+        with open(ann_path, "r") as f:
+            for line in f:
+                parts = line.strip().split("\t")
+                if len(parts) < 2:
+                    continue
+                filename, wnid = parts[0], parts[1]
+                self.samples.append((os.path.join(img_dir, filename), class_to_idx[wnid]))
+        self.targets = [label for _, label in self.samples]
+
+    def __len__(self) -> int:
+        return len(self.samples)
+
+    def __getitem__(self, idx: int):
+        path, label = self.samples[idx]
+        # A few Tiny ImageNet images are grayscale; force 3 channels like ImageFolder does
+        img = Image.open(path).convert("RGB")
+        if self.transform is not None:
+            img = self.transform(img)
+        return img, label
+
 def get_dataloaders(
     dataset: str = "cifar10",
     data_dir: str = "./data",
@@ -64,7 +104,9 @@ def get_dataloaders(
         val_tf   = get_test_transforms("tiny_imagenet", target_size=target_size)
 
         train_set = ImageFolder(root=train_dir, transform=train_tf)
-        val_set   = ImageFolder(root=train_dir, transform=val_tf)
+        # Validate on the held-out val/ split (previously this re-used train_dir,
+        # which measured accuracy on images the model had already trained on)
+        val_set   = TinyImageNetVal(root=tiny_dir, class_to_idx=train_set.class_to_idx, transform=val_tf)
         num_classes = 200
         classes = train_set.classes
 

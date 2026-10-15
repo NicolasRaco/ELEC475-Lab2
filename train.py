@@ -11,6 +11,7 @@ Features:
   - Real-time throughput (samples/second) logging
 """
 import os
+import json
 import argparse
 import torch
 import torch.nn as nn
@@ -91,6 +92,9 @@ def main():
     parser.add_argument("--no-augment", action="store_true", help="Disable training data augmentation")
     parser.add_argument("--save-model", type=str, default=None, help="Path to save best model checkpoint (.pth)")
     parser.add_argument("--plot-file", type=str, default=None, help="Path to save loss and accuracy curve plot")
+    parser.add_argument("--run-name", type=str, default=None,
+                        help="Name for this run's history file in results/ (default: --save-model filename, "
+                             "or <model>_<norm>_<dataset>_seed<seed>)")
     # Early Stopping Options
     parser.add_argument("--early-stopping", action="store_true", help="Enable early stopping mechanism")
     parser.add_argument("--early-stopping-metric", type=str, default="val_loss",
@@ -163,6 +167,7 @@ def main():
     # 6. Training Loop with High-Precision CUDA Synchronization Timer
     train_losses, val_losses = [], []
     train_accs, val_accs = [], []
+    val_f1s, epoch_times = [], []
     best_val_acc = 0.0
     best_val_f1 = 0.0
 
@@ -183,6 +188,8 @@ def main():
             val_losses.append(v_loss)
             train_accs.append(tr_acc)
             val_accs.append(v_acc)
+            val_f1s.append(v_f1)
+            epoch_times.append(elapsed)
 
             print(f"{epoch:^7d} | {tr_loss:^11.4f} | {tr_acc:^14.2f} | {v_loss:^10.4f} | {v_acc:^12.2f} | {v_f1:^11.2f} | {elapsed:^9.2f} | {throughput:^8.1f} s/s")
 
@@ -214,7 +221,58 @@ def main():
     if args.save_model:
         print(f"Best model weights saved to: {args.save_model}")
 
-    # 7. Save Plots
+    # 7. Save this run's full history so tables and ablation plots can be rebuilt later
+    if args.run_name:
+        run_name = args.run_name
+    elif args.save_model:
+        run_name = os.path.splitext(os.path.basename(args.save_model))[0]
+    else:
+        run_name = f"{args.model}_{args.norm}_{args.dataset}_seed{args.seed}"
+    os.makedirs("results", exist_ok=True)
+    history = {
+        "run_name": run_name,
+        "config": {
+            "model": args.model,
+            "norm": args.norm if args.model == "alexnet" else None,
+            "dataset": args.dataset,
+            "augmentation": not args.no_augment,
+            "epochs_requested": args.epochs,
+            "epochs_completed": len(val_accs),
+            "batch_size": args.batch_size,
+            "lr": args.lr,
+            "seed": args.seed,
+            "early_stopping": args.early_stopping,
+            "device": torch.cuda.get_device_name(0) if torch.cuda.is_available() else "CPU",
+        },
+        "complexity": {
+            "params_M": profiler.get_params_millions(),
+            "flops_M": profiler.get_flops_millions(),
+        },
+        "history": {
+            "train_loss": train_losses,
+            "val_loss": val_losses,
+            "train_acc": train_accs,
+            "val_acc": val_accs,
+            "val_f1": val_f1s,
+            "epoch_time_s": epoch_times,
+        },
+        "summary": {
+            "best_val_acc": best_val_acc,
+            "best_val_f1": best_val_f1,
+            "final_train_acc": train_accs[-1],
+            "final_val_acc": val_accs[-1],
+            "final_val_f1": val_f1s[-1],
+            "generalization_gap": train_accs[-1] - val_accs[-1],
+            "mean_epoch_time_s": sum(epoch_times) / len(epoch_times),
+            "total_time_s": total_timer.elapsed,
+        },
+    }
+    history_path = os.path.join("results", f"{run_name}.json")
+    with open(history_path, "w") as f:
+        json.dump(history, f, indent=2)
+    print(f"Run history saved to: {history_path}")
+
+    # 8. Save Plots
     if args.plot_file:
         model_display = f"{args.model} ({args.norm})" if args.model == "alexnet" else args.model
         plot_training_curves(train_losses, val_losses, train_accs, val_accs,
