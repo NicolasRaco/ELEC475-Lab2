@@ -240,6 +240,9 @@ def compare_model_complexities(
     rows = []
 
     for name, model in models_dict.items():
+        # Put the model on the same device as the profiler's test input (GPU or CPU).
+        # Without this, the FLOP counter fails partway and leaves broken hooks behind.
+        model = model.to(device)
         profiler = ModelProfiler(model, input_size=input_size, device=device)
         latency, throughput = benchmark_inference(model, input_size=input_size, device=device, reps=50, warmup=10)
         rows.append([
